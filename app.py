@@ -6,7 +6,7 @@ from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.linear_model import LogisticRegression
 
 # =========================
-# 📄 BACA PDF
+# PDF READER
 # =========================
 def extract_text(file):
     text = ""
@@ -16,25 +16,65 @@ def extract_text(file):
     return text
 
 # =========================
-# 🧠 SIMPAN MODEL
+# SKILL DICTIONARY (simple but effective)
+# =========================
+SKILL_DB = [
+    "python", "sql", "machine learning", "data analysis",
+    "excel", "tableau", "power bi", "deep learning",
+    "communication", "management", "java", "javascript"
+]
+
+def extract_skills(text):
+    text = text.lower()
+    found = [skill for skill in SKILL_DB if skill in text]
+    return found
+
+# =========================
+# REQUIREMENT SCORE
+# =========================
+def req_score(text, req):
+    if not req.strip():
+        return 0
+    words = req.lower().split()
+    return sum(1 for w in words if w in text.lower()) / len(words)
+
+# =========================
+# EXPLAINABLE AI (RULE BASED)
+# =========================
+def explain(text, req):
+    text_low = text.lower()
+    req_words = req.lower().split()
+
+    matched = [w for w in req_words if w in text_low]
+    missing = [w for w in req_words if w not in text_low]
+
+    explanation = ""
+    if matched:
+        explanation += "Matched: " + ", ".join(matched) + ". "
+    if missing:
+        explanation += "Missing: " + ", ".join(missing)
+
+    return explanation if explanation else "No requirement provided"
+
+# =========================
+# SESSION
 # =========================
 if "model" not in st.session_state:
     st.session_state.model = None
     st.session_state.vectorizer = None
 
-st.title("📄 CV Screening AI (Simple ATS)")
+st.title("📄 AI CV Screening Pro (ATS+)")
 
 # =========================
-# 🧠 TEACH AI
+# TRAIN
 # =========================
-st.header("1️⃣ Teaching AI")
+st.header("1️- Teach AI")
 
 ok_files = st.file_uploader("Upload CV OK", accept_multiple_files=True)
 ng_files = st.file_uploader("Upload CV NOT OK", accept_multiple_files=True)
 
 if st.button("Train AI"):
-    texts = []
-    labels = []
+    texts, labels = [], []
 
     for f in ok_files:
         texts.append(extract_text(f))
@@ -53,67 +93,78 @@ if st.button("Train AI"):
     st.session_state.model = model
     st.session_state.vectorizer = vectorizer
 
-    st.success("AI sudah belajar!")
+    st.success("AI trained!")
 
 # =========================
-# 📋 REQUIREMENT
+# SETTINGS
 # =========================
-st.header("2️⃣ Requirement Pekerjaan")
+st.header("2️- Settings")
 
-requirement = st.text_area("Contoh: python data analyst sql 3 years")
+requirement = st.text_area("Job Requirement (optional)")
 
-def req_score(text, req):
-    words = req.lower().split()
-    score = sum(1 for w in words if w in text.lower())
-    return score / len(words) if words else 0
+weight_ml = st.slider("ML Weight %", 0, 100, 60)
+weight_req = st.slider("Requirement Weight %", 0, 100 - weight_ml, 30)
+weight_skill = 100 - (weight_ml + weight_req)
+
+top_n = st.slider("Top N Candidates", 1, 20, 10)
 
 # =========================
-# 🔍 SCREENING
+# SCREENING
 # =========================
-st.header("3️⃣ Screening CV")
+st.header("3- Screening CV")
 
-screen_files = st.file_uploader("Upload CV untuk screening", accept_multiple_files=True)
+files = st.file_uploader("Upload CVs", accept_multiple_files=True)
 
 if st.button("Run Screening"):
-    if st.session_state.model is None:
-        st.error("Train AI dulu!")
-    else:
-        results = []
-        zip_ok = zipfile.ZipFile("OK.zip", "w")
-        zip_ng = zipfile.ZipFile("NG.zip", "w")
 
-        for f in screen_files:
-            text = extract_text(f)
-            X = st.session_state.vectorizer.transform([text])
+    results = []
 
-            prob = st.session_state.model.predict_proba(X)[0][1]
-            r_score = req_score(text, requirement)
+    for f in files:
+        text = extract_text(f)
 
-            final = (prob * 0.7) + (r_score * 0.3)
+        X = st.session_state.vectorizer.transform([text])
+        ml = st.session_state.model.predict_proba(X)[0][1]
 
-            status = "OK" if final > 0.5 else "NOT OK"
+        req = req_score(text, requirement)
+        skills = extract_skills(text)
 
-            results.append({
-                "Nama": f.name,
-                "AI Score": round(prob,2),
-                "Req Score": round(r_score,2),
-                "Final Score": round(final,2),
-                "Status": status
-            })
+        skill_score = len(skills) / len(SKILL_DB)
 
-            if status == "OK":
-                zip_ok.writestr(f.name, f.read())
-            else:
-                zip_ng.writestr(f.name, f.read())
+        final = (
+            (ml * weight_ml / 100) +
+            (req * weight_req / 100) +
+            (skill_score * weight_skill / 100)
+        )
 
-        zip_ok.close()
-        zip_ng.close()
+        explanation = explain(text, requirement)
 
-        df = pd.DataFrame(results)
-        df.to_csv("hasil.csv", index=False)
+        results.append({
+            "name": f.name,
+            "ml_score": ml,
+            "req_score": req,
+            "skill_score": skill_score,
+            "skills_found": ", ".join(skills),
+            "final_score": final,
+            "explanation": explanation
+        })
 
-        st.dataframe(df)
+    # =========================
+    # SORT TOP N
+    # =========================
+    df = pd.DataFrame(results)
+    df = df.sort_values("final_score", ascending=False)
 
-        st.download_button("⬇️ Download CSV", open("hasil.csv","rb"), "hasil.csv")
-        st.download_button("⬇️ Download OK CV", open("OK.zip","rb"), "OK.zip")
-        st.download_button("⬇️ Download NG CV", open("NG.zip","rb"), "NG.zip")
+    st.subheader("🏆 Top Candidates")
+    st.dataframe(df.head(top_n))
+
+    st.subheader("📊 Full Results")
+    st.dataframe(df)
+
+    # =========================
+    # EXPORT
+    # =========================
+    st.download_button(
+        "⬇️ Download CSV",
+        df.to_csv(index=False),
+        "results.csv"
+    )
